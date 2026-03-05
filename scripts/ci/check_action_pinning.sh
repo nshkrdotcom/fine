@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! command -v rg >/dev/null 2>&1; then
-  echo "ripgrep (rg) is required" >&2
-  exit 1
-fi
-
 status=0
+
+if command -v rg >/dev/null 2>&1; then
+  find_uses_cmd=(rg -n '^[[:space:]]*uses:[[:space:]]+' .github/workflows/*.yml)
+else
+  find_uses_cmd=(grep -nE '^[[:space:]]*uses:[[:space:]]+' .github/workflows/*.yml)
+fi
 
 while IFS=: read -r file line content; do
   uses_value="${content#*uses:}"
@@ -28,6 +29,6 @@ while IFS=: read -r file line content; do
     echo "${file}:${line}: action reference must be pinned to a full commit SHA: ${uses_value}" >&2
     status=1
   fi
-done < <(rg -n '^[[:space:]]*uses:[[:space:]]+' .github/workflows/*.yml)
+done < <("${find_uses_cmd[@]}")
 
 exit "$status"
