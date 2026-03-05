@@ -2,10 +2,12 @@
 #define FINE_HPP
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -52,20 +54,62 @@ void init_atoms(ErlNifEnv *env);
 bool init_resources(ErlNifEnv *env);
 int load(ErlNifEnv *, void **, ERL_NIF_TERM) noexcept;
 void unload(ErlNifEnv *, void *) noexcept;
+bool atom_creation_enabled() noexcept;
+std::uint64_t max_decode_container_len() noexcept;
+void assert_decode_container_limit(const char *container_name,
+                                   std::uint64_t size);
 } // namespace __private__
 
 // Definitions
 
 namespace __private__ {
-inline ERL_NIF_TERM make_atom(ErlNifEnv *env, const char *msg) {
+inline ERL_NIF_TERM make_atom(ErlNifEnv *env, const char *msg,
+                              bool allow_create = true) {
   ERL_NIF_TERM atom;
   if (enif_make_existing_atom(env, msg, &atom, FINE_ERL_NIF_CHAR_ENCODING)) {
     return atom;
-  } else {
-    return enif_make_atom(env, msg);
   }
+
+  if (!allow_create) {
+    throw std::invalid_argument(
+        "encode failed, atom does not exist and dynamic atom creation is "
+        "disabled");
+  }
+
+  return enif_make_atom(env, msg);
+}
+
+inline void log_unhandled_exception(const char *context,
+                                    const std::exception &error) noexcept {
+  enif_fprintf(stderr, "%s: %s\n", context, error.what());
+}
+
+inline void log_unhandled_exception(const char *context) noexcept {
+  enif_fprintf(stderr, "%s\n", context);
+}
+
+#ifdef FINE_ENABLE_TEST_HOOKS
+inline std::atomic<bool> force_resource_alloc_failure = false;
+#endif
+
+inline void *alloc_resource(ErlNifResourceType *type, std::size_t size) {
+#ifdef FINE_ENABLE_TEST_HOOKS
+  if (force_resource_alloc_failure.load(std::memory_order_relaxed)) {
+    return nullptr;
+  }
+#endif
+  return enif_alloc_resource(type, size);
 }
 } // namespace __private__
+
+#ifdef FINE_ENABLE_TEST_HOOKS
+namespace testing {
+inline void set_force_resource_allocation_failure(bool enabled) noexcept {
+  __private__::force_resource_alloc_failure.store(enabled,
+                                                  std::memory_order_relaxed);
+}
+} // namespace testing
+#endif
 
 // A representation of an atom term.
 class Atom {
@@ -123,6 +167,9 @@ inline auto __exception__ = Atom("__exception__");
 inline auto message = Atom("message");
 inline auto ElixirArgumentError = Atom("Elixir.ArgumentError");
 inline auto ElixirRuntimeError = Atom("Elixir.RuntimeError");
+inline auto trusted = Atom("trusted");
+inline auto allow_new_atoms = Atom("allow_new_atoms");
+inline auto max_decode_container_len = Atom("max_decode_container_len");
 } // namespace __private__::atoms
 
 // Represents any term.
@@ -237,9 +284,26 @@ template <typename T> struct ResourceWrapper {
 
     if (resource_wrapper->initialized) {
       if constexpr (has_destructor<T>::value) {
-        resource_wrapper->resource.destructor(env);
+        try {
+          resource_wrapper->resource.destructor(env);
+        } catch (const std::exception &error) {
+          __private__::log_unhandled_exception(
+              "unhandled exception in resource destructor callback", error);
+        } catch (...) {
+          __private__::log_unhandled_exception(
+              "unhandled throw in resource destructor callback");
+        }
       }
-      resource_wrapper->resource.~T();
+
+      try {
+        resource_wrapper->resource.~T();
+      } catch (const std::exception &error) {
+        __private__::log_unhandled_exception(
+            "unhandled exception in resource destructor", error);
+      } catch (...) {
+        __private__::log_unhandled_exception(
+            "unhandled throw in resource destructor");
+      }
     }
   }
 
@@ -331,7 +395,11 @@ ResourcePtr<T> make_resource(Args &&...args) {
   }
 
   void *allocation_ptr =
-      enif_alloc_resource(type, sizeof(__private__::ResourceWrapper<T>));
+      __private__::alloc_resource(type, sizeof(__private__::ResourceWrapper<T>));
+
+  if (allocation_ptr == nullptr) {
+    throw std::runtime_error("resource allocation failed");
+  }
 
   auto resource_wrapper =
       reinterpret_cast<__private__::ResourceWrapper<T> *>(allocation_ptr);
@@ -623,6 +691,8 @@ template <typename T, typename Alloc> struct Decoder<std::vector<T, Alloc>> {
       throw std::invalid_argument("decode failed, expected a list");
     }
 
+    __private__::assert_decode_container_limit("list", length);
+
     std::vector<T, Alloc> vector;
     vector.reserve(length);
 
@@ -644,6 +714,14 @@ struct Decoder<std::map<K, V, Compare, Alloc>> {
   static std::map<K, V, Compare, Alloc> decode(ErlNifEnv *env,
                                                const ERL_NIF_TERM &term) {
     std::map<K, V, Compare, Alloc> map;
+    std::size_t map_size = 0;
+
+    if (!enif_get_map_size(env, term, &map_size)) {
+      throw std::invalid_argument("decode failed, expected a map");
+    }
+
+    __private__::assert_decode_container_limit("map",
+                                               static_cast<std::uint64_t>(map_size));
 
     ERL_NIF_TERM key_term, value_term;
     ErlNifMapIterator iter;
@@ -681,6 +759,15 @@ struct Decoder<std::unordered_map<K, V, Hash, Pred, Alloc>> {
   static std::unordered_map<K, V, Hash, Pred, Alloc>
   decode(ErlNifEnv *env, const ERL_NIF_TERM &term) {
     std::unordered_map<K, V, Hash, Pred, Alloc> map;
+    std::size_t map_size = 0;
+
+    if (!enif_get_map_size(env, term, &map_size)) {
+      throw std::invalid_argument("decode failed, expected a map");
+    }
+
+    __private__::assert_decode_container_limit("map",
+                                               static_cast<std::uint64_t>(map_size));
+    map.reserve(map_size);
 
     ERL_NIF_TERM key_term, value_term;
     ErlNifMapIterator iter;
@@ -723,6 +810,8 @@ struct Decoder<std::multimap<K, V, Compare, Alloc>> {
       throw std::invalid_argument("decode failed, expected a list");
     }
 
+    __private__::assert_decode_container_limit("list", length);
+
     std::multimap<K, V, Compare, Alloc> map;
 
     auto list = term;
@@ -750,7 +839,10 @@ struct Decoder<std::unordered_multimap<K, V, Hash, Pred, Alloc>> {
       throw std::invalid_argument("decode failed, expected a list");
     }
 
+    __private__::assert_decode_container_limit("list", length);
+
     std::unordered_multimap<K, V, Hash, Pred, Alloc> map;
+    map.reserve(length);
 
     auto list = term;
 
@@ -910,7 +1002,8 @@ template <> struct Encoder<Atom> {
     if (atom.term) {
       return atom.term.value();
     } else {
-      return fine::__private__::make_atom(env, atom.name.c_str());
+      return fine::__private__::make_atom(
+          env, atom.name.c_str(), __private__::atom_creation_enabled());
     }
   }
 };
@@ -1266,6 +1359,81 @@ private:
 // NIF definitions
 
 namespace __private__ {
+struct SecurityPolicy {
+  bool allow_new_atoms;
+  std::uint64_t max_decode_container_len;
+};
+
+inline std::atomic<bool> security_allow_new_atoms = true;
+inline std::atomic<std::uint64_t> security_max_decode_container_len =
+    std::numeric_limits<std::uint64_t>::max();
+
+inline SecurityPolicy trusted_security_policy() noexcept {
+  return SecurityPolicy{
+      true, std::numeric_limits<std::uint64_t>::max()};
+}
+
+inline SecurityPolicy untrusted_security_policy() noexcept {
+  return SecurityPolicy{false, 65'536};
+}
+
+inline void set_security_policy(const SecurityPolicy &policy) noexcept {
+  security_allow_new_atoms.store(policy.allow_new_atoms,
+                                 std::memory_order_relaxed);
+  security_max_decode_container_len.store(policy.max_decode_container_len,
+                                          std::memory_order_relaxed);
+}
+
+inline bool atom_creation_enabled() noexcept {
+  return security_allow_new_atoms.load(std::memory_order_relaxed);
+}
+
+inline std::uint64_t max_decode_container_len() noexcept {
+  return security_max_decode_container_len.load(std::memory_order_relaxed);
+}
+
+inline void assert_decode_container_limit(const char *container_name,
+                                          std::uint64_t size) {
+  auto max = max_decode_container_len();
+  if (size > max) {
+    throw std::invalid_argument("decode failed, " +
+                                std::string(container_name) + " has " +
+                                std::to_string(size) +
+                                " elements, exceeds configured maximum of " +
+                                std::to_string(max));
+  }
+}
+
+inline void configure_security_policy(ErlNifEnv *env, ERL_NIF_TERM load_info) {
+  // Keep backward compatibility with existing callers that pass non-map
+  // load info (such as integer 0), while allowing explicit secure settings.
+  auto policy = trusted_security_policy();
+
+  if (enif_is_map(env, load_info)) {
+    policy = untrusted_security_policy();
+
+    ERL_NIF_TERM term;
+    if (enif_get_map_value(env, load_info, fine::encode(env, atoms::trusted),
+                           &term)) {
+      auto trusted = fine::decode<bool>(env, term);
+      policy = trusted ? trusted_security_policy() : untrusted_security_policy();
+    }
+
+    if (enif_get_map_value(env, load_info,
+                           fine::encode(env, atoms::allow_new_atoms), &term)) {
+      policy.allow_new_atoms = fine::decode<bool>(env, term);
+    }
+
+    if (enif_get_map_value(env, load_info,
+                           fine::encode(env, atoms::max_decode_container_len),
+                           &term)) {
+      policy.max_decode_container_len = fine::decode<std::uint64_t>(env, term);
+    }
+  }
+
+  set_security_policy(policy);
+}
+
 inline ERL_NIF_TERM raise_error_with_message(ErlNifEnv *env, Atom module,
                                              std::string message) {
   ERL_NIF_TERM keys[3] = {fine::encode(env, __private__::atoms::__struct__),
@@ -1341,6 +1509,16 @@ inline int load(ErlNifEnv *caller_env, void **priv_data,
                 ERL_NIF_TERM load_info) noexcept {
   init_atoms(caller_env);
 
+  try {
+    configure_security_policy(caller_env, load_info);
+  } catch (const std::exception &error) {
+    log_unhandled_exception("invalid security configuration", error);
+    return -1;
+  } catch (...) {
+    log_unhandled_exception("invalid security configuration");
+    return -1;
+  }
+
   if (!init_resources(caller_env)) {
     return -1;
   }
@@ -1351,10 +1529,10 @@ inline int load(ErlNifEnv *caller_env, void **priv_data,
                   priv_data, load_info);
     }
   } catch (const std::exception &e) {
-    enif_fprintf(stderr, "unhandled exception: %s\n", e.what());
+    log_unhandled_exception("unhandled exception in load callback", e);
     return -1;
   } catch (...) {
-    enif_fprintf(stderr, "unhandled throw\n");
+    log_unhandled_exception("unhandled throw in load callback");
     return -1;
   }
 
@@ -1363,8 +1541,14 @@ inline int load(ErlNifEnv *caller_env, void **priv_data,
 
 inline void unload(ErlNifEnv *caller_env, void *priv_data) noexcept {
   if (fine::Registration::erl_nif_unload_callback) {
-    std::invoke(fine::Registration::erl_nif_unload_callback, caller_env,
-                priv_data);
+    try {
+      std::invoke(fine::Registration::erl_nif_unload_callback, caller_env,
+                  priv_data);
+    } catch (const std::exception &error) {
+      log_unhandled_exception("unhandled exception in unload callback", error);
+    } catch (...) {
+      log_unhandled_exception("unhandled throw in unload callback");
+    }
   }
 }
 } // namespace __private__

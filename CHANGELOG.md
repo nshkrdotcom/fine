@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [Unreleased](https://github.com/elixir-nx/fine/tree/main)
+
+### Added
+
+- Security load options for trusted vs untrusted operation via NIF `load_info` map:
+  `trusted`, `allow_new_atoms`, and `max_decode_container_len`.
+- Decode container-size guardrails for list/map-based decoders.
+- CI guardrails for SHA-pinned actions and TDD/RGR policy checks.
+- Security workflow with dependency review and CodeQL C/C++ analysis.
+
+### Fixed
+
+- Resource allocation now fails with a handled runtime error instead of risking
+  null dereference on allocation failure.
+- Resource destructor and unload callback exceptions are caught and logged to
+  prevent process termination from C++ exceptions crossing NIF boundaries.
+
 ## [v0.1.4](https://github.com/elixir-nx/fine/tree/v0.1.4) (2025-08-14)
 
 ### Added

@@ -99,6 +99,43 @@ Otherwise, you can inline the dir to `deps/fine/include`.
 > CPPFLAGS += -fvisibility=hidden
 > ```
 
+## Security modes
+
+Fine supports both trusted and untrusted NIF boundary modes via
+`load_info` passed to `:erlang.load_nif/2`.
+
+For compatibility, non-map `load_info` (such as `0`) keeps legacy
+trusted behavior.
+
+For untrusted input, pass a map explicitly:
+
+```elixir
+def __on_load__ do
+  path = :filename.join(:code.priv_dir(:my_lib), ~c"libmy_lib")
+
+  load_info = %{
+    trusted: false,
+    max_decode_container_len: 65_536
+  }
+
+  :erlang.load_nif(path, load_info)
+end
+```
+
+Supported options:
+
+- `trusted` (`boolean`) - when `true`, enables legacy trusted mode
+  (dynamic atom creation enabled and decode container limit disabled).
+
+- `allow_new_atoms` (`boolean`) - explicitly controls runtime atom
+  creation for non-preinitialized `fine::Atom` values.
+
+- `max_decode_container_len` (`non_neg_integer`) - caps list/map
+  element count accepted by decoders.
+
+When running in untrusted mode (`trusted: false`), `allow_new_atoms`
+defaults to `false` and `max_decode_container_len` defaults to `65_536`.
+
 ## Usage
 
 A minimal NIF adding two numbers can be implemented like so:
@@ -293,6 +330,9 @@ class Generator {
 If defined, the `destructor` callback is called first, and then the
 `T` destructor is called as usual.
 
+Any exception thrown in either destructor path is caught and logged to
+stderr to prevent exception propagation across the NIF boundary.
+
 Oftentimes NIFs deal with classes from third-party packages, in which
 case, you may not control how the objects are created and you cannot
 add callbacks such as `destructor` to the implementation. If you run
@@ -469,6 +509,10 @@ namespace atoms {
   auto hello_world = fine::Atom("hello_world");
 }
 ```
+
+In untrusted mode, encoding a non-preinitialized atom is rejected with
+`ArgumentError`. This avoids atom-table exhaustion from attacker-controlled
+values.
 
 ## Result types
 

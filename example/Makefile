@@ -4,6 +4,7 @@ C_SRC := $(shell pwd)/c_src
 
 CPPFLAGS := -shared -fPIC -fvisibility=hidden -std=c++17 -Wall -Wextra
 CPPFLAGS += -I$(ERTS_INCLUDE_DIR) -I$(FINE_INCLUDE_DIR)
+CPPFLAGS += $(EXTRA_CPPFLAGS)
 
 ifdef DEBUG
 	CPPFLAGS += -g

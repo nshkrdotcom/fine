@@ -4,8 +4,10 @@ C_SRC=$(MAKEDIR)\c_src
 
 CPPFLAGS=/LD /std:c++17 /W4 /O2 /EHsc
 CPPFLAGS=$(CPPFLAGS) /I"$(ERTS_INCLUDE_DIR)" /I"$(FINE_INCLUDE_DIR)"
+CPPFLAGS=$(CPPFLAGS) /DFINE_ENABLE_TEST_HOOKS
 # We want to eliminate all warnings, so the end user doesn't see any.
 CPPFLAGS=$(CPPFLAGS) /WX
+CPPFLAGS=$(CPPFLAGS) $(EXTRA_CPPFLAGS)
 
 SOURCES=$(C_SRC)\*.cpp
 # We add dependency on Fine header file, since it can change as we test.

@@ -6,7 +6,13 @@ defmodule Finest.NIF do
   def __on_load__ do
     path = :filename.join(:code.priv_dir(:finest), ~c"libfinest")
 
-    case :erlang.load_nif(path, 0) do
+    load_info =
+      Application.get_env(:finest, :fine_nif_load_info, %{
+        trusted: false,
+        max_decode_container_len: 65_536
+      })
+
+    case :erlang.load_nif(path, load_info) do
       :ok -> :ok
       {:error, reason} -> raise "failed to load NIF library, reason: #{inspect(reason)}"
     end
@@ -25,6 +31,7 @@ defmodule Finest.NIF do
   def codec_string(_term), do: err!()
   def codec_string_alloc(_term), do: err!()
   def codec_atom(_term), do: err!()
+  def codec_atom_from_binary(_term), do: err!()
   def codec_nullopt(), do: err!()
   def codec_optional_int64(_term), do: err!()
   def codec_variant_int64_or_string(_term), do: err!()
@@ -55,6 +62,11 @@ defmodule Finest.NIF do
   def resource_create(_pid), do: err!()
   def resource_get(_resource), do: err!()
   def resource_binary(_resource), do: err!()
+  def set_resource_allocation_failure(_enabled), do: err!()
+
+  def throwing_resource_create(), do: err!()
+  def throwing_resource_destructor_called(), do: err!()
+  def throwing_resource_destructor_reset(), do: err!()
 
   def make_new_binary(), do: err!()
 

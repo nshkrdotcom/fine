@@ -1,0 +1,57 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "30 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48
+
+  codeql:
+    name: CodeQL (C/C++)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: github/codeql-action/init@ae9ef3a1d2e3413523c3741725c30064970cc0d4
+        with:
+          languages: c-cpp
+
+      - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9
+        with:
+          otp-version: "27.2"
+          elixir-version: "1.18.2"
+
+      - run: mix deps.get --check-locked
+        working-directory: test
+      - run: mix compile --warnings-as-errors
+        working-directory: test
+
+      - uses: github/codeql-action/analyze@ae9ef3a1d2e3413523c3741725c30064970cc0d4
+        with:
+          category: "/language:c-cpp"

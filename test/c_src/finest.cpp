@@ -20,6 +20,7 @@ auto ElixirFinestPoint = fine::Atom("Elixir.Finest.Point");
 auto data = fine::Atom("data");
 auto destructor_with_env = fine::Atom("destructor_with_env");
 auto destructor_default = fine::Atom("destructor_default");
+auto oops = fine::Atom("oops");
 auto x = fine::Atom("x");
 auto y = fine::Atom("y");
 } // namespace atoms
@@ -55,6 +56,16 @@ struct TestResource {
   }
 };
 FINE_RESOURCE(TestResource);
+
+static std::atomic<bool> s_throwing_resource_destructor_called = false;
+
+struct ThrowingDestructorResource {
+  void destructor(ErlNifEnv *) {
+    s_throwing_resource_destructor_called.store(true);
+    throw std::runtime_error("throwing destructor callback");
+  }
+};
+FINE_RESOURCE(ThrowingDestructorResource);
 
 struct ExPoint {
   int64_t x;
@@ -132,6 +143,11 @@ FINE_NIF(codec_string_alloc, 0);
 
 fine::Atom codec_atom(ErlNifEnv *, fine::Atom term) { return term; }
 FINE_NIF(codec_atom, 0);
+
+fine::Atom codec_atom_from_binary(ErlNifEnv *, std::string atom_name) {
+  return fine::Atom(std::move(atom_name));
+}
+FINE_NIF(codec_atom_from_binary, 0);
 
 std::nullopt_t codec_nullopt(ErlNifEnv *) { return std::nullopt; }
 FINE_NIF(codec_nullopt, 0);
@@ -324,6 +340,33 @@ fine::Term resource_binary(ErlNifEnv *env,
 }
 FINE_NIF(resource_binary, 0);
 
+std::nullopt_t set_resource_allocation_failure(ErlNifEnv *, bool enabled) {
+#ifdef FINE_ENABLE_TEST_HOOKS
+  fine::testing::set_force_resource_allocation_failure(enabled);
+#else
+  (void)enabled;
+#endif
+  return std::nullopt;
+}
+FINE_NIF(set_resource_allocation_failure, 0);
+
+fine::ResourcePtr<ThrowingDestructorResource>
+throwing_resource_create(ErlNifEnv *) {
+  return fine::make_resource<ThrowingDestructorResource>();
+}
+FINE_NIF(throwing_resource_create, 0);
+
+bool throwing_resource_destructor_called(ErlNifEnv *) {
+  return s_throwing_resource_destructor_called.load();
+}
+FINE_NIF(throwing_resource_destructor_called, 0);
+
+std::nullopt_t throwing_resource_destructor_reset(ErlNifEnv *) {
+  s_throwing_resource_destructor_called.store(false);
+  return std::nullopt;
+}
+FINE_NIF(throwing_resource_destructor_reset, 0);
+
 fine::Term make_new_binary(ErlNifEnv *env) {
   const char *buffer = "hello world";
   size_t size = 11;
@@ -355,7 +398,7 @@ int64_t raise_elixir_exception(ErlNifEnv *env) {
 FINE_NIF(raise_elixir_exception, 0);
 
 int64_t raise_erlang_error(ErlNifEnv *env) {
-  fine::raise(env, fine::Atom("oops"));
+  fine::raise(env, atoms::oops);
 
   // MSVC detects that raise throws and treats return as unreachable
 #if !defined(_WIN32)

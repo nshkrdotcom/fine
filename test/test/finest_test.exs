@@ -104,6 +104,18 @@ defmodule FinestTest do
       end
     end
 
+    test "atom from binary respects untrusted mode" do
+      unique_name =
+        "fine_dynamic_atom_" <>
+          Integer.to_string(System.unique_integer([:positive]))
+
+      assert_raise ArgumentError,
+                   "encode failed, atom does not exist and dynamic atom creation is disabled",
+                   fn ->
+                     NIF.codec_atom_from_binary(unique_name)
+                   end
+    end
+
     test "nullopt" do
       assert NIF.codec_nullopt() == nil
     end
@@ -157,6 +169,16 @@ defmodule FinestTest do
       assert_raise ArgumentError, "decode failed, expected an integer", fn ->
         NIF.codec_vector_int64([10.0])
       end
+    end
+
+    test "vector decode has a container limit in untrusted mode" do
+      too_large_list = Enum.to_list(0..65_536)
+
+      assert_raise ArgumentError,
+                   "decode failed, list has 65537 elements, exceeds configured maximum of 65536",
+                   fn ->
+                     NIF.codec_vector_int64(too_large_list)
+                   end
     end
 
     test "map" do
@@ -397,6 +419,34 @@ defmodule FinestTest do
     end
   end
 
+  describe "resource allocation failure" do
+    test "returns a handled runtime error instead of crashing the VM" do
+      NIF.set_resource_allocation_failure(true)
+
+      assert_raise RuntimeError, "resource allocation failed", fn ->
+        NIF.resource_create(self())
+      end
+    after
+      NIF.set_resource_allocation_failure(false)
+    end
+  end
+
+  describe "throwing resource destructor" do
+    test "does not crash the VM and still runs the destructor path" do
+      NIF.throwing_resource_destructor_reset()
+
+      resource = NIF.throwing_resource_create()
+      assert is_reference(resource)
+
+      resource = nil
+      assert resource == nil
+
+      :erlang.garbage_collect(self())
+
+      assert_eventually(fn -> NIF.throwing_resource_destructor_called() end)
+    end
+  end
+
   describe "make_new_binary" do
     test "creates a binary term copying the original buffer" do
       assert NIF.make_new_binary() == "hello world"
@@ -512,6 +562,19 @@ defmodule FinestTest do
   describe "callbacks" do
     test "load" do
       assert NIF.is_loaded()
+    end
+  end
+
+  defp assert_eventually(fun, attempts \\ 50)
+
+  defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
+
+  defp assert_eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(fun, attempts - 1)
     end
   end
 end
