@@ -5,6 +5,7 @@ C_SRC := $(shell pwd)/c_src
 CPPFLAGS := -shared -fPIC -fvisibility=hidden -std=c++17 -Wall -Wextra
 CPPFLAGS += -I$(ERTS_INCLUDE_DIR) -I$(FINE_INCLUDE_DIR)
 CPPFLAGS += $(EXTRA_CPPFLAGS)
+LDFLAGS += $(EXTRA_LDFLAGS)
 
 ifdef DEBUG
 	CPPFLAGS += -g
@@ -20,6 +21,11 @@ ifeq ($(TARGET_ABI),darwin)
 	CPPFLAGS += -undefined dynamic_lookup -flat_namespace
 endif
 
+ifeq ($(TARGET_ABI),linux)
+	CPPFLAGS += -fstack-protector-strong -D_FORTIFY_SOURCE=2
+	LDFLAGS += -Wl,-z,relro -Wl,-z,now
+endif
+
 SOURCES := $(wildcard $(C_SRC)/*.cpp)
 
 all: $(NIF_PATH)
@@ -27,4 +33,4 @@ all: $(NIF_PATH)
 
 $(NIF_PATH): $(SOURCES)
 	@ mkdir -p $(PRIV_DIR)
-	$(CXX) $(CPPFLAGS) $(SOURCES) -o $(NIF_PATH)
+	$(CXX) $(CPPFLAGS) $(SOURCES) -o $(NIF_PATH) $(LDFLAGS)

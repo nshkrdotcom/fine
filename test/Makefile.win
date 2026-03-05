@@ -8,6 +8,9 @@ CPPFLAGS=$(CPPFLAGS) /DFINE_ENABLE_TEST_HOOKS
 # We want to eliminate all warnings, so the end user doesn't see any.
 CPPFLAGS=$(CPPFLAGS) /WX
 CPPFLAGS=$(CPPFLAGS) $(EXTRA_CPPFLAGS)
+CPPFLAGS=$(CPPFLAGS) /guard:cf
+LDFLAGS=/guard:cf /DYNAMICBASE /NXCOMPAT
+LDFLAGS=$(LDFLAGS) $(EXTRA_LDFLAGS)
 
 SOURCES=$(C_SRC)\*.cpp
 # We add dependency on Fine header file, since it can change as we test.
@@ -17,4 +20,4 @@ all: $(NIF_PATH)
 
 $(NIF_PATH): $(SOURCES) $(FINE_HEADERS)
 	@ if not exist "$(PRIV_DIR)" mkdir "$(PRIV_DIR)"
-	cl $(CPPFLAGS) $(SOURCES) /Fe"$(NIF_PATH)"
+	cl $(CPPFLAGS) $(SOURCES) /Fe"$(NIF_PATH)" /link $(LDFLAGS)

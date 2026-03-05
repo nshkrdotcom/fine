@@ -20,6 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   null dereference on allocation failure.
 - Resource destructor and unload callback exceptions are caught and logged to
   prevent process termination from C++ exceptions crossing NIF boundaries.
+- Native build defaults now include stronger hardening flags for Linux and
+  Windows targets, with override hooks for CI/tooling customization.
 
 ## [v0.1.4](https://github.com/elixir-nx/fine/tree/v0.1.4) (2025-08-14)
 

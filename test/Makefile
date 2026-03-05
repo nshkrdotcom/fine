@@ -8,6 +8,7 @@ CPPFLAGS += -DFINE_ENABLE_TEST_HOOKS
 # We want to eliminate all warnings, so the end user doesn't see any.
 CPPFLAGS += -Werror
 CPPFLAGS += $(EXTRA_CPPFLAGS)
+LDFLAGS += $(EXTRA_LDFLAGS)
 
 ifdef DEBUG
 	CPPFLAGS += -g
@@ -23,6 +24,11 @@ ifeq ($(TARGET_ABI),darwin)
 	CPPFLAGS += -undefined dynamic_lookup -flat_namespace
 endif
 
+ifeq ($(TARGET_ABI),linux)
+	CPPFLAGS += -fstack-protector-strong -D_FORTIFY_SOURCE=2
+	LDFLAGS += -Wl,-z,relro -Wl,-z,now
+endif
+
 SOURCES := $(wildcard $(C_SRC)/*.cpp)
 # We add dependency on Fine header file, since it can change as we test.
 FINE_HEADERS := $(wildcard $(FINE_INCLUDE_DIR)/*.hpp)
@@ -32,4 +38,4 @@ all: $(NIF_PATH)
 
 $(NIF_PATH): $(SOURCES) $(FINE_HEADERS)
 	@ mkdir -p $(PRIV_DIR)
-	$(CXX) $(CPPFLAGS) $(SOURCES) -o $(NIF_PATH)
+	$(CXX) $(CPPFLAGS) $(SOURCES) -o $(NIF_PATH) $(LDFLAGS)
